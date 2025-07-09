@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Users, FileText, Mail, MessageSquare, Shield, Clock, TrendingUp } from 'lucide-react';
-
+import Link from 'next/link';
 export default function InterviewPlatformLanding() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
@@ -22,10 +22,16 @@ export default function InterviewPlatformLanding() {
             <a href="#features" className="text-slate-600 hover:text-blue-600 transition-colors">Features</a>
             <a href="#how-it-works" className="text-slate-600 hover:text-blue-600 transition-colors">How It Works</a>
             <a href="#pricing" className="text-slate-600 hover:text-blue-600 transition-colors">Pricing</a>
-            <Button variant="outline" className="mr-2">Sign In</Button>
+          <Link
+          href={"/login"}>
+          <Button variant="outline" className="mr-2">Sign In</Button>
+          </Link>
+            <Link
+            href={"/login"}>
             <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
               Get Started
-            </Button>
+          </Button>
+          </Link>
           </nav>
         </div>
       </header>
