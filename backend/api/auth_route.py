@@ -39,7 +39,7 @@ async def signup(user: UserSignup, response: Response):
         value=access_token,
         httponly=True,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
+        samesite="None",
         secure=True,
     )
     response.set_cookie(
@@ -47,7 +47,7 @@ async def signup(user: UserSignup, response: Response):
         value=refresh_token,
         httponly=True,
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-        samesite="lax",
+        samesite="None",
         secure=True,
     )
 
@@ -79,7 +79,7 @@ async def login(user: UserLogin, response: Response):
         value=access_token,
         httponly=True,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
+        samesite="None",
         secure=True,
     )
     response.set_cookie(
@@ -87,7 +87,7 @@ async def login(user: UserLogin, response: Response):
         value=refresh_token,
         httponly=True,
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-        samesite="lax",
+        samesite="None",
         secure=True,
     )
 
@@ -124,7 +124,7 @@ async def refresh_token(response: Response, request: Request):
         value=new_access,
         httponly=True,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
+        samesite="None",
         secure=True,
     )
     return {"access_token": new_access}
