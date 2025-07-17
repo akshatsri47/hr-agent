@@ -16,223 +16,453 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_MESSAGE = SystemMessage(
     content=(
-        "You are an AI conducting a structured, professional interview. "
-        "Follow these stages in order: introduction, experience, technical, "
-        "role-specific, behavioral, closing. Ask one concise question at a time "
-        "(2–3 sentences), referencing the candidate’s resume or the job description. "
-        "Use a friendly but professional tone. End after {max_questions} questions."
+        "You are an experienced technical interviewer conducting a structured, professional interview. "
+        "Your goal is to assess the candidate's technical skills, cultural fit, and potential for growth. "
+        "Maintain a conversational, supportive tone while gathering meaningful insights."
     )
 )
 
 class InterviewSession:
-    def __init__(self, job_description: str, resume_text: str, max_questions: int = 4):
+    def __init__(self, job_description: str, resume_text: str, max_questions: int = 8):
         self.job_description = job_description
         self.resume_text = resume_text
         self.max_questions = max_questions
         self.conversation_history: list[dict] = []
         self.question_count = 0
+        
+        # More detailed stage definitions with specific purposes
         self.interview_stages = [
-            "introduction", "experience", "technical",
-            "role_specific", "behavioral", "closing",
+            {
+                "name": "introduction",
+                "purpose": "Build rapport and understand motivation",
+                "question_style": "Open-ended, welcoming questions about background and interest"
+            },
+            {
+                "name": "experience_deep_dive", 
+                "purpose": "Explore relevant past experience with specific examples",
+                "question_style": "STAR method questions focusing on specific situations and outcomes"
+            },
+            {
+                "name": "technical_assessment",
+                "purpose": "Evaluate technical competency and problem-solving approach", 
+                "question_style": "Scenario-based questions requiring detailed technical explanations"
+            },
+            {
+                "name": "role_specific_fit",
+                "purpose": "Assess fit for specific job requirements and challenges",
+                "question_style": "Job-specific scenarios and hypothetical situations"
+            },
+            {
+                "name": "behavioral_insights",
+                "purpose": "Understand work style, collaboration, and growth mindset",
+                "question_style": "Behavioral questions using past examples to predict future performance"
+            },
+            {
+                "name": "closing_exploration",
+                "purpose": "Address questions and assess genuine interest",
+                "question_style": "Open dialogue about expectations and mutual fit"
+            }
         ]
+        
         self.current_stage = 0
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
 
-    def build_prompt(self) -> list[HumanMessage | SystemMessage]:
-        stage = self.interview_stages[self.current_stage]
-        msgs = [
-            SYSTEM_MESSAGE,
-            SystemMessage(content=(
-                f"Stage: {stage}\n\n"
-                f"Job Description:\n{self.job_description}\n\n"
-                f"Candidate’s Resume:\n{self.resume_text}"
-            )),
-        ]
-        for turn in self.conversation_history:
-            msgs.append(HumanMessage(content=f"Q: {turn['question']}"))
-            msgs.append(HumanMessage(content=f"A: {turn['answer']}"))
-        msgs.append(HumanMessage(
-            content=f"You have asked {self.question_count} questions so far. Please ask the next one."
-        ))
+    def build_enhanced_prompt(self) -> list[HumanMessage | SystemMessage]:
+        current_stage_info = self.interview_stages[self.current_stage]
+        stage_name = current_stage_info["name"]
+        stage_purpose = current_stage_info["purpose"]
+        question_style = current_stage_info["question_style"]
+        
+        progress = f"{self.question_count}/{self.max_questions}"
+        
+        recent_context = ""
+        if self.conversation_history:
+            last_qa = self.conversation_history[-1]
+            recent_context = f"\nLast Q&A for context:\nQ: {last_qa['question']}\nA: {last_qa['answer'][:200]}..."
+        
+        context_msg = SystemMessage(content=f"""
+INTERVIEW CONTEXT:
+Progress: {progress} questions completed
+Current Stage: {stage_name} ({stage_purpose})
+Question Style: {question_style}
+
+JOB REQUIREMENTS:
+{self.job_description}
+
+CANDIDATE BACKGROUND:
+{self.resume_text}
+
+GUIDELINES:
+- Ask ONE focused question that builds on previous answers
+- Reference specific details from their resume or previous responses
+- Use follow-up questions to dig deeper into interesting points
+- Maintain professional but conversational tone
+- For technical questions, ask for specific examples and explanations
+- For behavioral questions, use "Tell me about a time when..." format
+- Keep questions concise (2-3 sentences max)
+- Avoid yes/no questions - seek detailed responses
+
+{recent_context}
+""")
+        
+        msgs = [SYSTEM_MESSAGE, context_msg]
+        
+        for i, turn in enumerate(self.conversation_history):
+            msgs.append(HumanMessage(content=f"Previous Question {i+1}: {turn['question']}"))
+            msgs.append(HumanMessage(content=f"Candidate Response {i+1}: {turn['answer']}"))
+        
+        instruction = f"""
+Based on the {stage_name} stage focus and the conversation so far, ask your next question.
+If this is a follow-up, reference something specific from their last answer.
+Question {self.question_count + 1} of {self.max_questions}:
+"""
+        msgs.append(HumanMessage(content=instruction))
         return msgs
+
+    def create_personalized_opening(self) -> str:
+        return (
+            "Hello! I'm excited to speak with you today about this opportunity. "
+            "I've reviewed your background and I'm particularly interested in your experience. "
+            "Could you start by telling me what drew you to apply for this role and "
+            "what aspects of your background make you most excited about this opportunity?"
+        )
+    
+    def refine_question(self, question: str, candidate_input: str) -> str:
+        prefixes_to_remove = [
+            "Great question!", "That's interesting.", "Thank you for sharing.",
+            "I see.", "Excellent.", "Perfect."
+        ]
+        for prefix in prefixes_to_remove:
+            if question.startswith(prefix):
+                question = question[len(prefix):].strip()
+        if not question.endswith(('?', '.', '!')):
+            question += '?'
+        return question
+    
+    def get_fallback_question(self) -> str:
+        stage_name = self.interview_stages[self.current_stage]["name"]
+        fallbacks = {
+            "introduction": "What interests you most about this role and our company?",
+            "experience_deep_dive": "Can you walk me through a challenging project you've worked on recently?",
+            "technical_assessment": "How would you approach solving a complex technical problem in this domain?",
+            "role_specific_fit": "What do you see as the biggest challenges in this role, and how would you address them?",
+            "behavioral_insights": "Tell me about a time when you had to collaborate with a difficult team member.",
+            "closing_exploration": "What questions do you have about the role or our team?"
+        }
+        return fallbacks.get(stage_name, "Could you tell me more about your relevant experience?")
+    
+    def advance_stage(self):
+        questions_per_stage = max(1, self.max_questions // len(self.interview_stages))
+        expected_stage = min(
+            (self.question_count - 1) // questions_per_stage,
+            len(self.interview_stages) - 1
+        )
+        self.current_stage = expected_stage
 
     async def get_response(self, candidate_input: str = None) -> str:
         if self.question_count == 0:
-            q = (
-                "Hello! I'm excited to speak with you today about this opportunity. "
-                "Could you please introduce yourself and tell me why this role interests you?"
-            )
-        else:
-            try:
-                llm_out = await self.llm.ainvoke(self.build_prompt())
-                q = llm_out.content
-            except Exception as e:
-                logger.error(f"LLM error: {e}")
-                q = "That’s interesting. Can you tell me more about your relevant experience?"
+            opening = self.create_personalized_opening()
+            self.question_count += 1
+            return opening
+        
+        try:
+            llm_out = await self.llm.ainvoke(self.build_enhanced_prompt())
+            question = self.refine_question(llm_out.content.strip(), candidate_input)
+        except Exception as e:
+            logger.error(f"LLM error: {e}")
+            question = self.get_fallback_question()
+        
         self.question_count += 1
-        if self.current_stage < len(self.interview_stages) - 1:
-            self.current_stage += 1
-        return q
+        self.advance_stage()
+        return question
 
     async def score_answer(self, question: str, answer: str) -> int | None:
-        prompt = (
-            "On a scale from 1 to 10, how well does this answer address the question "
-            "in terms of relevance and completeness? Respond with only the number.\n\n"
-            f"Question: {question}\nAnswer: {answer}"
-        )
+        current_stage_info = self.interview_stages[self.current_stage]
+        scoring_prompt = f"""
+You are evaluating a candidate's interview response. Consider the following:
+
+QUESTION: {question}
+ANSWER: {answer}
+
+EVALUATION CRITERIA:
+- Stage: {current_stage_info['name']} ({current_stage_info['purpose']})
+- Relevance: How well does the answer address the question?
+- Depth: Does the answer provide sufficient detail and examples?
+- Clarity: Is the response well-structured and easy to follow?
+- Technical accuracy: (For technical questions) Are the concepts correct?
+- Behavioral indicators: (For behavioral questions) Does it show good judgment/skills?
+
+Score from 1-10 where:
+1-3: Poor (vague, irrelevant, or incorrect)
+4-6: Average (basic response, some relevance)
+7-8: Good (solid response with good detail)
+9-10: Excellent (comprehensive, insightful, well-articulated)
+
+Respond with only the number.
+"""
         try:
-            res = await self.llm.ainvoke(prompt)
-            return int(res.content.strip())
+            res = await self.llm.ainvoke(scoring_prompt)
+            score = int(res.content.strip())
+            return max(1, min(10, score))
         except Exception as e:
             logger.warning(f"Scoring failed: {e}")
             return None
 
     def add_to_history(self, question: str, answer: str, score: int | None):
         self.conversation_history.append({
-            "question": question, "answer": answer, "score": score
+            "question": question,
+            "answer": answer,
+            "score": score,
+            "stage": self.interview_stages[self.current_stage]["name"],
+            "question_number": self.question_count
         })
+
+
+async def finalize_interview(session: InterviewSession,
+                             session_id,
+                             websocket: WebSocket):
+    """Compute final score & summary, persist, send wrap-up, and close WS."""
+    doc = interview_sessions.find_one({"_id": session_id})
+    scores = [h["score"] for h in doc.get("history", []) if h.get("score") is not None]
+    avg = sum(scores) / len(scores) if scores else None
+
+    if avg is not None:
+        # Build stage-by-stage breakdown
+        stage_breakdown: dict[str, list[int]] = {}
+        for item in doc.get("history", []):
+            stage = item.get("stage", "unknown")
+            if item.get("score") is not None:
+                stage_breakdown.setdefault(stage, []).append(item["score"])
+        # Summarize averages
+        stage_summary = ""
+        for stg, stg_scores in stage_breakdown.items():
+            if stg_scores:
+                s_avg = sum(stg_scores) / len(stg_scores)
+                stage_summary += f"{stg}: {s_avg:.1f}/10, "
+        # Generate summary
+        summary_prompt = f"""
+The candidate completed an interview with an overall average score of {avg:.1f}/10.
+
+Stage-by-stage performance:
+{stage_summary}
+
+Please provide a comprehensive but concise summary covering:
+1. Key strengths demonstrated
+2. Areas for improvement
+3. Overall assessment for the role
+4. Specific recommendations
+
+Keep it professional and constructive.
+"""
+        summary = (await session.llm.ainvoke(summary_prompt)).content
+    else:
+        summary = "Not enough scored answers to generate a comprehensive summary."
+        stage_breakdown = None
+
+    # === New: Ask the LLM for a direct recommendation ===
+    rec_prompt = f"""
+Based on the candidate’s overall average score of {avg:.1f}/10 and the stage-by-stage
+summary provided, would you recommend advancing this candidate to the next stage?
+Respond with EXACTLY one word: “Yes” or “No”, and then in 1–2 sentences justify your choice.
+"""
+    recommendation = (await session.llm.ainvoke(rec_prompt)).content.strip()
+
+    # Persist final results in interview_sessions
+    interview_sessions.update_one(
+        {"_id": session_id},
+        {"$set": {
+            "ended_at":        datetime.utcnow(),
+            "average_score":   avg,
+            "summary":         summary,
+            "stage_breakdown": stage_breakdown,
+            "recommendation":  recommendation
+        }}
+    )
+
+    # Mark the resume as interviewed
+    job_profiles.update_one(
+        {"_id": ObjectId(doc["job_id"]), "scoredResumes.resumeId": doc["resume_id"]},
+        {"$set": {
+            "scoredResumes.$.interviewDone": True,
+            "scoredResumes.$.sessionId":     session_id
+        }}
+    )
+
+    # Send wrap-up over WebSocket
+    await websocket.send_json({
+        "text":            "⏰ Interview completed! Here's your comprehensive assessment:",
+        "summary":         summary,
+        "average_score":   avg,
+        "stage_breakdown": stage_breakdown,
+        "recommendation":  recommendation
+    })
+    await websocket.close()
+
+
+async def finalize_after_10min(session, session_id, websocket):
+    try:
+        await asyncio.sleep(600)  # 10 minutes
+        await finalize_interview(session, session_id, websocket)
+    except asyncio.CancelledError:
+        pass
+
 
 @router.websocket("/ws/interview/{job_id}/{resume_id}")
 async def interview_ws(websocket: WebSocket, job_id: str, resume_id: str):
+    # 1) Fetch job & candidate entry
+    job = job_profiles.find_one({"_id": ObjectId(job_id)})
+    if not job:
+        await websocket.accept()
+        await websocket.send_json({"error": "Job not found"})
+        await websocket.close()
+        return
+
+    entry = next(
+        (r for r in job.get("scoredResumes", []) if str(r.get("resumeId")) == resume_id),
+        None
+    )
+    if not entry:
+        await websocket.accept()
+        await websocket.send_json({"error": "Resume not found"})
+        await websocket.close()
+        return
+
+    # 2) Enforce schedule window
+    sched = entry.get("interview_schedule")
+    now = datetime.utcnow()
+    if not sched:
+        await websocket.accept()
+        await websocket.send_json({"error": "Interview not scheduled for this candidate"})
+        await websocket.close()
+        return
+    start, end = sched["start"], sched["end"]
+    if now < start:
+        await websocket.accept()
+        await websocket.send_json({
+            "error":    "Interview window hasn't opened yet",
+            "startsAt": start.isoformat()
+        })
+        await websocket.close()
+        return
+    if now > end:
+        await websocket.accept()
+        await websocket.send_json({"error": "Interview window has expired"})
+        await websocket.close()
+        return
+
+    # 3) Accept WS and create session doc
     await websocket.accept()
+    sess_doc = {
+        "job_id":           job_id,
+        "resume_id":        resume_id,
+        "scheduled_start":  start,
+        "scheduled_end":    end,
+        "started_at":       now,
+        "history":          [],
+        "stage_progression": []
+    }
+    session_id = interview_sessions.insert_one(sess_doc).inserted_id
+    session = InterviewSession(job["description"], entry["text"], max_questions=8)
+
+    # 4) Auto-finalize timer
+    auto_task = asyncio.create_task(finalize_after_10min(session, session_id, websocket))
+
+    async def send_response(text: str):
+        await websocket.send_json({
+            "text":            text,
+            "question_count":  session.question_count,
+            "max_questions":   session.max_questions,
+            "current_stage":   session.interview_stages[session.current_stage]["name"],
+            "stage_progress":  f"{session.current_stage+1}/{len(session.interview_stages)}"
+        })
+
     try:
-        job = job_profiles.find_one({"_id": ObjectId(job_id)})
-        if not job:
-            await websocket.send_json({"error": "Job not found"})
-            return
-        entry = next((r for r in job.get("scoredResumes", []) if r["resumeId"] == resume_id), None)
-        if not entry:
-            await websocket.send_json({"error": "Resume not found"})
-            return
-
-        session = InterviewSession(job["description"], entry["text"], max_questions=8)
-        sess_doc = {"job_id": job_id, "resume_id": resume_id, "started_at": datetime.utcnow(), "history": []}
-        session_id = interview_sessions.insert_one(sess_doc).inserted_id
-
-        async def send_response(text: str):
-            await websocket.send_json({
-                "text": text,
-                "question_count": session.question_count,
-                "max_questions": session.max_questions
-            })
-
+        # Initial question
         last_q = await session.get_response()
         await send_response(last_q)
 
+        # Main loop
         while True:
-            try:
-                msg = await websocket.receive_json()
+            msg = await websocket.receive_json()
 
-                if msg.get("type") == "tab-switch":
-                    interview_sessions.update_one(
-                        {"_id": session_id},
-                        {"$push": {"tabEvents": {"count": msg["count"], "timestamp": datetime.utcnow()}}}
-                    )
-                    continue
-
-                if msg.get("type") == "gaze":
-                    interview_sessions.update_one(
-                        {"_id": session_id},
-                        {"$push": {"gazeData": {
-                            "x": msg["x"], "y": msg["y"], "t": msg["t"], "timestamp": datetime.utcnow()
-                        }}}
-                    )
-                    continue
-
-                if msg.get("type") == "object-detect":
-                    interview_sessions.update_one(
-                        {"_id": session_id},
-                        {"$push": {"objectEvents": {
-                            "people": msg["people"], "phones": msg["phones"], "timestamp": datetime.utcnow()
-                        }}}
-                    )
-                    continue
-
-                if msg.get("type") == "not-looking":
-                    interview_sessions.update_one(
-                        {"_id": session_id},
-                        {"$push": {"warningEvents": {
-                            "type": "not-looking", "timestamp": datetime.utcnow()
-                        }}}
-                    )
-                    continue
-
-                answer = msg.get("answer", "").strip()
-                if not answer:
-                    await websocket.send_json({"error": "Empty answer received"})
-                    continue
-                if answer.lower() in {"quit", "exit", "end interview"}:
-                    break
-
-                score = await session.score_answer(last_q, answer)
-                interview_scores.insert_one({
-                    "job_id": job_id, "resume_id": resume_id,
-                    "question_number": session.question_count,
-                    "question": last_q, "answer": answer,
-                    "score": score, "timestamp": datetime.utcnow()
-                })
-
-                session.add_to_history(last_q, answer, score)
+            # Telemetry events
+            if msg.get("type") in {"tab-switch", "gaze", "object-detect", "not-looking"}:
+                field = {
+                    "tab-switch": "tabEvents",
+                    "gaze": "gazeData",
+                    "object-detect": "objectEvents",
+                    "not-looking": "warningEvents"
+                }[msg["type"]]
                 interview_sessions.update_one(
                     {"_id": session_id},
-                    {"$push": {"history": {
-                        "question_number": session.question_count,
-                        "question": last_q, "answer": answer,
-                        "score": score, "timestamp": datetime.utcnow()
-                    }}}
+                    {"$push": {field: {**msg, "timestamp": datetime.utcnow()}}}
                 )
+                continue
 
-                backoff = 1
-                for attempt in range(3):
-                    try:
-                        next_q = await session.get_response(answer)
-                        break
-                    except Exception as e:
-                        logger.error(f"Error: {e}")
-                        if attempt == 2:
-                            next_q = "What is your greatest strength for this role?"
-                            break
-                        await asyncio.sleep(backoff); backoff *= 2
+            answer = msg.get("answer", "").strip()
+            if not answer:
+                await websocket.send_json({"error": "Empty answer received"})
+                continue
+            if answer.lower() in {"quit", "exit", "end interview"}:
+                break
 
-                last_q = next_q
-                await send_response(next_q)
-                if session.question_count >= session.max_questions:
+            # Score & record
+            score = await session.score_answer(last_q, answer)
+            interview_scores.insert_one({
+                "job_id":         job_id,
+                "resume_id":      resume_id,
+                "question_number":session.question_count,
+                "question":       last_q,
+                "answer":         answer,
+                "score":          score,
+                "timestamp":      datetime.utcnow(),
+                "stage":          session.interview_stages[session.current_stage]["name"]
+            })
+            session.add_to_history(last_q, answer, score)
+            interview_sessions.update_one(
+                {"_id": session_id},
+                {"$push": {"history": {
+                    "question_number":session.question_count,
+                    "question":       last_q,
+                    "answer":         answer,
+                    "score":          score,
+                    "timestamp":      datetime.utcnow(),
+                    "stage":          session.interview_stages[session.current_stage]["name"]
+                }}}
+            )
+            interview_sessions.update_one(
+                {"_id": session_id},
+                {"$push": {"stage_progression": {
+                    "stage":          session.interview_stages[session.current_stage]["name"],
+                    "question_number":session.question_count,
+                    "timestamp":      datetime.utcnow()
+                }}}
+            )
+
+            # Next question with retry
+            backoff = 1
+            for attempt in range(3):
+                try:
+                    last_q = await session.get_response(answer)
                     break
+                except Exception as e:
+                    logger.error(f"Error generating question: {e}")
+                    if attempt == 2:
+                        last_q = session.get_fallback_question()
+                        break
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
 
-            except WebSocketDisconnect:
-                return
-            except Exception as e:
-                logger.error(f"Loop error: {e}")
-                await websocket.send_json({"error": f"Interview error: {e}"})
-                return
+            await send_response(last_q)
+            if session.question_count >= session.max_questions:
+                break
 
-        # Wrap-up
-        doc = interview_sessions.find_one({"_id": session_id})
-        scores = [h["score"] for h in doc.get("history", []) if h.get("score") is not None]
-        avg = sum(scores)/len(scores) if scores else None
-        if avg is not None:
-            summary = (await session.llm.ainvoke(
-                f"The candidate scored an average of {avg:.1f}/10. Summarize strengths & growth areas."
-            )).content
-        else:
-            summary = "Not enough scored answers to generate a summary."
-
-        interview_sessions.update_one(
-            {"_id": session_id},
-            {"$set": {"ended_at": datetime.utcnow(), "average_score": avg, "summary": summary}}
-        )
-        job_profiles.update_one(
-            { "_id": job["_id"], "scoredResumes.resumeId": resume_id },
-            { "$set": {
-                "scoredResumes.$.interviewDone": True,
-                "scoredResumes.$.sessionId": session_id
-            }}
-        )
-
-        await send_response("Thank you for your time! Here’s a brief wrap-up:")
-        await websocket.send_json({"summary": summary, "average_score": avg})
-
+    except WebSocketDisconnect:
+        return
     finally:
+        if not auto_task.done():
+            auto_task.cancel()
+            await finalize_interview(session, session_id, websocket)
         await websocket.close()
 
 
@@ -242,9 +472,8 @@ async def get_interview_session(session_id: str):
     doc = interview_sessions.find_one({"_id": ObjectId(session_id)})
     if not doc:
         raise HTTPException(status_code=404, detail="Interview session not found")
-    # Convert ObjectId → str for JSON serialization
     doc["_id"] = str(doc["_id"])
-    doc["job_id"]   = str(doc["job_id"])
+    doc["job_id"] = str(doc["job_id"])
     doc["resume_id"] = str(doc["resume_id"])
     return {"session": doc}
 
@@ -258,10 +487,7 @@ async def reset_interview(
     Deletes the in-flight session and clears the interviewDone flag
     so the candidate can be re-interviewed.
     """
-    # 1. Delete the session document
     interview_sessions.delete_one({"_id": ObjectId(session_id)})
-
-    # 2. Unset the flags in job_profiles
     job_profiles.update_one(
         { "scoredResumes.sessionId": ObjectId(session_id) },
         { "$unset": {
@@ -269,5 +495,86 @@ async def reset_interview(
             "scoredResumes.$.sessionId": ""
         }}
     )
-
     return {"ok": True, "message": "Interview session reset"}
+
+
+@router.get("/analytics/{job_id}")
+async def get_interview_analytics(job_id: str):
+    """Get analytics for all interviews for a specific job"""
+    pipeline = [
+        {"$match": {"job_id": job_id}},
+        {"$unwind": "$history"},
+        {"$group": {
+            "_id": "$history.stage",
+            "avg_score": {"$avg": "$history.score"},
+            "question_count": {"$sum": 1},
+            "scores": {"$push": "$history.score"}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    stage_analytics = list(interview_sessions.aggregate(pipeline))
+    overall_pipeline = [
+        {"$match": {"job_id": job_id}},
+        {"$group": {
+            "_id": None,
+            "total_interviews": {"$sum": 1},
+            "avg_score": {"$avg": "$average_score"},
+            "completion_rate": {"$avg": {"$cond": [{"$ne": ["$ended_at", None]}, 1, 0]}}
+        }}
+    ]
+    overall_stats = list(interview_sessions.aggregate(overall_pipeline))
+    return {
+        "stage_analytics": stage_analytics,
+        "overall_stats": overall_stats[0] if overall_stats else None,
+        "job_id": job_id
+    }
+@router.get("/session/by-resume/{resume_id}")
+async def get_full_session_by_resume(resume_id: str):
+    """
+    Fetch the latest interview session for a given resume_id,
+    including the full Q&A history, average score, recommendation, and summary.
+    """
+    # Find the most recent session for this resume
+    doc = interview_sessions.find_one(
+        {"resume_id": resume_id},
+        sort=[("started_at", -1)]
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="No interview session found for that resume_id")
+
+    # Convert ObjectId timestamps to ISO strings
+    # and ensure all fields are JSON-serializable
+    session = {
+        "session_id":       str(doc["_id"]),
+        "job_id":           str(doc["job_id"]),
+        "resume_id":        doc["resume_id"],
+        "scheduled_start":  doc["scheduled_start"].isoformat(),
+        "scheduled_end":    doc["scheduled_end"].isoformat(),
+        "started_at":       doc["started_at"].isoformat(),
+        "ended_at":         doc.get("ended_at").isoformat() if doc.get("ended_at") else None,
+        "average_score":    doc.get("average_score"),
+        "recommendation":   doc.get("recommendation"),
+        "summary":          doc.get("summary"),
+        "stage_breakdown":  doc.get("stage_breakdown"),
+        "history": [
+            {
+                "question_number": h["question_number"],
+                "question":        h["question"],
+                "answer":          h["answer"],
+                "score":           h.get("score"),
+                "stage":           h.get("stage"),
+                "timestamp":       h["timestamp"].isoformat(),
+            }
+            for h in doc.get("history", [])
+        ],
+        "stage_progression": [
+            {
+                "stage":           sp["stage"],
+                "question_number": sp["question_number"],
+                "timestamp":       sp["timestamp"].isoformat(),
+            }
+            for sp in doc.get("stage_progression", [])
+        ],
+    }
+
+    return {"session": session}

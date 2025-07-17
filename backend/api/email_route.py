@@ -1,11 +1,13 @@
 import asyncio
 from fastapi import FastAPI, HTTPException, Body
+from pydantic import BaseModel
 from fastapi.routing import APIRouter
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from typing import List
 from bson import ObjectId
 from db.database import job_profiles
 import os
+from datetime import datetime
 
 # ─── Hard-coded mail & app settings ─────────────────────────────────────────────
 MAIL_USERNAME = os.getenv("MAIL_USERNAME")
@@ -18,7 +20,7 @@ MAIL_PORT     = 465
 MAIL_STARTTLS = False  # Changed from MAIL_TLS
 MAIL_SSL_TLS  = True   # Changed from MAIL_SSL
 
-FRONTEND_URL  = "https://app.yoursite.com"
+FRONTEND_URL  = "http://localhost:3000"
 
 
 conf = ConnectionConfig(
@@ -103,4 +105,44 @@ async def send_invites(
         "errors":          failed,
         "total_requested": len(tasks),
     }
+class ScheduleRequest(BaseModel):
+    job_id:      str
+    resume_ids:  List[str]
+    start_time:  datetime
+    end_time:    datetime
 
+@router.post("/schedule-interview")
+async def schedule_interview(req: ScheduleRequest):
+    # 1. validate job exists
+    job = job_profiles.find_one({"_id": ObjectId(req.job_id)})
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    # 2. validate times
+    if req.start_time >= req.end_time:
+        raise HTTPException(400, "start_time must be before end_time")
+
+    # 3. update each scoredResume entry with an interview_schedule sub-doc
+    result = job_profiles.update_one(
+        {"_id": ObjectId(req.job_id)},
+        {
+            "$set": {
+                "scoredResumes.$[cand].interview_schedule": {
+                    "start": req.start_time,
+                    "end":   req.end_time
+                }
+            }
+        },
+        array_filters=[{"cand.resumeId": {"$in": req.resume_ids}}]
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(404, "No matching resumes found in this job")
+
+    return {
+        "message":       "Interview(s) scheduled",
+        "job_id":        req.job_id,
+        "resume_ids":    req.resume_ids,
+        "starts_at":     req.start_time,
+        "ends_at":       req.end_time
+    }

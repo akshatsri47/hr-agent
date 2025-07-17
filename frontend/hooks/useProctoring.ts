@@ -1,4 +1,3 @@
-// hooks/useProctoring.ts
 import { useState, useEffect, useRef } from "react";
 
 const CAL_POINTS = 3;
@@ -6,10 +5,21 @@ const GAZE_THRESHOLD_MS = 3000;
 const WINDOW_SIZE = 5;
 
 export function useProctoring(ws: WebSocket | null) {
+  // Streams
   const [camStream, setCamStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const camRef = useRef<HTMLVideoElement | null>(null);
   const screenRef = useRef<HTMLVideoElement | null>(null);
+
+  // Device lists
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+
+  // Selected device IDs
+  const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState<string | null>(null);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState<string | null>(null);
+
+  // Detector
   const [detector, setDetector] = useState<any>(null);
 
   // Calibration
@@ -18,9 +28,51 @@ export function useProctoring(ws: WebSocket | null) {
 
   // Gaze smoothing
   const gazeTimes = useRef<number[]>([]);
-  interface GazeData { x: number; y: number; /* …other props… */ }
+  interface GazeData { x: number; y: number; }
 
-  // 1) Screen share
+  // Enumerate devices
+  useEffect(() => {
+    navigator.mediaDevices.enumerateDevices()
+      .then((devices) => {
+        setVideoDevices(devices.filter(d => d.kind === 'videoinput'));
+        setAudioDevices(devices.filter(d => d.kind === 'audioinput'));
+      })
+      .catch(console.error);
+  }, []);
+
+  // Start camera + microphone
+  const startCam = async () => {
+    if (!selectedVideoDeviceId || !selectedAudioDeviceId) return;
+    try {
+      const constraints: MediaStreamConstraints = {
+        video: { deviceId: { exact: selectedVideoDeviceId } },
+        audio: { deviceId: { exact: selectedAudioDeviceId } }
+      };
+      const s = await navigator.mediaDevices.getUserMedia(constraints);
+      setCamStream(s);
+      if (camRef.current) camRef.current.srcObject = s;
+
+      // Initialize webgazer for eye-tracking
+      const { default: webgazer } = await import("webgazer");
+      webgazer
+        .setVideoElement(camRef.current!)
+        .setRegression("ridge")
+        .begin();
+      webgazer.showVideo(false).showFaceOutline(false).showFaceFeedbackBox(false);
+
+      webgazer.setGazeListener((data: GazeData | null, timestamp: number) => {
+        if (!data || !calibrated) return;
+        const now = Date.now();
+        gazeTimes.current.unshift(now);
+        if (gazeTimes.current.length > WINDOW_SIZE) gazeTimes.current.pop();
+        ws?.send(JSON.stringify({ type: "gaze", x: data.x, y: data.y, t: timestamp }));
+      });
+    } catch (e) {
+      console.error("Camera+Mic error:", e);
+    }
+  };
+
+  // Start screen share
   const startScreen = async () => {
     try {
       // @ts-ignore
@@ -32,44 +84,7 @@ export function useProctoring(ws: WebSocket | null) {
     }
   };
 
-  // 2) Camera + eye‐tracking + calibration
-  const startCam = async () => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: true });
-      setCamStream(s);
-      if (camRef.current) camRef.current.srcObject = s;
-
-      const { default: webgazer } = await import("webgazer");
-      webgazer
-        .setVideoElement(camRef.current!)
-        .setRegression("ridge")
-        .begin();
-      webgazer.showVideo(false).showFaceOutline(false).showFaceFeedbackBox(false);
-
-      // Gaze listener only starts counting after calibration
-      webgazer.setGazeListener((data: GazeData | null, timestamp: number) => {
-        if (!data || !calibrated) return;
-        // push and cap the array
-        const now = Date.now();
-        gazeTimes.current.unshift(now);
-        if (gazeTimes.current.length > WINDOW_SIZE) gazeTimes.current.pop();
-        ws?.send(JSON.stringify({ type: "gaze", x: data.x, y: data.y, t: timestamp }));
-      });
-    } catch (e) {
-      console.error("Camera error:", e);
-    }
-  };
-
-  // Calibration click handler
-  const recordCalibration = () => {
-    setCalCount((c) => {
-      const next = c + 1;
-      if (next >= CAL_POINTS) setCalibrated(true);
-      return next;
-    });
-  };
-
-  // 3) Object detection
+  // Object detection
   useEffect(() => {
     let mounted = true;
     Promise.all([import("@tensorflow/tfjs"), import("@tensorflow-models/coco-ssd")])
@@ -96,12 +111,11 @@ export function useProctoring(ws: WebSocket | null) {
     return () => { stop = true; };
   }, [detector, ws]);
 
-  // 4) Tab‐switch detection
+  // Tab-switch detection
   useEffect(() => {
     const onVis = () => {
       if (document.hidden) {
         ws?.send(JSON.stringify({ type: "tab-switch", count: 1 }));
-        // inline banner might be better UX, but keep alert for now
         alert("Please stay on the interview page.");
       }
     };
@@ -109,7 +123,7 @@ export function useProctoring(ws: WebSocket | null) {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [ws]);
 
-  // 5) Debounced “not‐looking” warning
+  // Not-looking warning
   useEffect(() => {
     const iv = setInterval(() => {
       if (!calibrated) return;
@@ -119,21 +133,34 @@ export function useProctoring(ws: WebSocket | null) {
       if (Date.now() - oldest > GAZE_THRESHOLD_MS) {
         ws?.send(JSON.stringify({ type: "not-looking" }));
         alert("Please look at the camera.");
-        // reset window
         gazeTimes.current = [];
       }
     }, GAZE_THRESHOLD_MS);
     return () => clearInterval(iv);
   }, [calibrated, ws]);
 
+  // Calibration recorder
+  const recordCalibration = () => {
+    setCalCount(c => {
+      const next = c + 1;
+      if (next >= CAL_POINTS) setCalibrated(true);
+      return next;
+    });
+  };
+
   return {
     camStream,
     screenStream,
     camRef,
     screenRef,
+    videoDevices,
+    audioDevices,
+    selectedVideoDeviceId,
+    selectedAudioDeviceId,
+    setSelectedVideoDeviceId,
+    setSelectedAudioDeviceId,
     startCam,
     startScreen,
-    // expose calibration
     calibration: { count: calCount, points: CAL_POINTS, record: recordCalibration, done: calibrated },
   };
 }

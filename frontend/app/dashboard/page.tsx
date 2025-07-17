@@ -1,13 +1,13 @@
 'use client'
 
 import React, { useState, useEffect, useContext } from 'react'
-import { Users } from 'lucide-react'
+import { Users, Sparkles, Shield, Clock } from 'lucide-react'
 import { AuthContext } from '@/context/AuthContext'
 import JobsGrid from '@/components/ui/dashboard/Jobsgrid'
 import UploadResume from '@/components/ui/dashboard/UploadResume'
 import ResumeResults from '@/components/ui/dashboard/ResumeResult'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL
 
 interface Resume {
   resumeId:        string
@@ -20,7 +20,6 @@ interface Resume {
   interviewDone?:  boolean
   sessionId?:      string
 }
-
 
 interface Job {
   jobId: string
@@ -211,32 +210,67 @@ const HRInterviewApp = () => {
     }
   }, [jobs, selectedJob])
 
-  // Loading state
+  // Enhanced Loading state with modern design
   if (!ready) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4" />
-          <p className="text-gray-600">Loading...</p>
+          <div className="relative mb-8">
+            <div className="w-16 h-16 border-4 border-blue-200 rounded-full animate-spin border-t-blue-600 mx-auto"></div>
+            <div className="absolute inset-0 w-16 h-16 border-4 border-transparent rounded-full animate-pulse border-t-blue-400 mx-auto"></div>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-semibold text-gray-800">Loading HR Portal</h3>
+            <p className="text-gray-600">Preparing your interview dashboard...</p>
+          </div>
         </div>
       </div>
     )
   }
 
-  // Authentication required
+  // Enhanced Authentication required with better design
   if (!user) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="bg-white p-8 rounded-lg shadow-sm border border-gray-200 text-center max-w-md">
-          <Users className="w-12 h-12 text-blue-600 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Authentication Required</h2>
-          <p className="text-gray-600 mb-4">Please log in to access the HR Interview AI portal.</p>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center p-4">
+        <div className="bg-white/80 backdrop-blur-sm p-8 rounded-2xl shadow-xl border border-white/20 text-center max-w-md w-full">
+          <div className="mb-6">
+            <div className="relative inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full mb-4">
+              <Users className="w-8 h-8 text-white" />
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full animate-pulse opacity-75"></div>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              Welcome to HR Interview AI
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Please authenticate to access your interview management portal and start evaluating candidates.
+            </p>
+          </div>
+          
+          <div className="space-y-4 mb-6">
+            <div className="flex items-center justify-center space-x-2 text-sm text-gray-500">
+              <Shield className="w-4 h-4" />
+              <span>Secure Authentication</span>
+            </div>
+            <div className="flex items-center justify-center space-x-2 text-sm text-gray-500">
+              <Sparkles className="w-4 h-4" />
+              <span>AI-Powered Resume Analysis</span>
+            </div>
+            <div className="flex items-center justify-center space-x-2 text-sm text-gray-500">
+              <Clock className="w-4 h-4" />
+              <span>Real-time Processing</span>
+            </div>
+          </div>
+          
           <button
             onClick={() => (window.location.href = '/login')}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold px-6 py-3 rounded-lg transition-all duration-200 transform hover:scale-[1.02] shadow-lg hover:shadow-xl"
           >
-            Go to Login
+            Access Login Portal
           </button>
+          
+          <div className="mt-4 text-xs text-gray-500">
+            Secure • Encrypted • GDPR Compliant
+          </div>
         </div>
       </div>
     )
