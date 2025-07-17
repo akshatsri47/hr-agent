@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState,useContext } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,6 +14,7 @@ import {
    Mail, Lock, User, CheckCircle,
   AlertCircle, Eye, EyeOff, Shield, Sparkles
 } from 'lucide-react'
+import { AuthContext } from '@/context/AuthContext'
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL
 
@@ -25,9 +26,10 @@ export default function AuthPage() {
   const [formData, setFormData] = useState({
     email: '', password: '', name: ''
   })
+
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-
+const { setUser } = useContext(AuthContext) 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
@@ -71,6 +73,7 @@ export default function AuthPage() {
 
       if (res.ok) {
         setSuccess(data.message)
+        setUser(data.user)
         setTimeout(() => router.push('/dashboard'), 1500)
       } else {
         setError(data.detail || 'Authentication failed')
